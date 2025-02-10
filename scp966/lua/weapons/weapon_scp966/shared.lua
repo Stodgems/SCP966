@@ -9,14 +9,19 @@ SWEP.Primary.DefaultClip = -1
 SWEP.Primary.Automatic = true
 SWEP.Primary.Ammo = "none"
 
+SWEP.Secondary.ClipSize = -1
+SWEP.Secondary.DefaultClip = -1
+SWEP.Secondary.Automatic = false
+SWEP.Secondary.Ammo = "none"
+
 SWEP.UseHands = true
 SWEP.ViewModel = Model("models/weapons/c_arms_citizen.mdl")
 SWEP.WorldModel = ""
 
-TARGET_PLAYER = nil
-SWEP.StalkPercentage = 0
 
 function SWEP:Initialize()
+    self.TargetPlayer = nil
+    self.StalkPercentage = 0
     if IsValid(self.Owner) then
         self:MakeInvisible()
     else
@@ -40,7 +45,7 @@ function SWEP:PrimaryAttack()
         self.Owner:LagCompensation(true)
         local tr = self.Owner:GetEyeTrace()
         if tr.Hit and tr.HitPos:Distance(self.Owner:GetPos()) <= 75 then
-            if tr.Entity == TARGET_PLAYER and self.StalkPercentage == 100 then
+            if tr.Entity == self.TargetPlayer and self.StalkPercentage == 100 then
                 local dmg = DamageInfo()
                 dmg:SetDamage(tr.Entity:Health())
                 dmg:SetAttacker(self.Owner)
@@ -60,6 +65,10 @@ function SWEP:PrimaryAttack()
         self.Owner:LagCompensation(false)
     end
     self:SetNextPrimaryFire(CurTime() + 1)
+end
+
+function SWEP:SecondaryAttack()
+    -- No secondary fire functionality
 end
 
 function SWEP:MakeInvisible()
@@ -116,24 +125,24 @@ function SWEP:SelectTargetPlayer()
         end
 
         if closestPlayer then
-            if IsValid(TARGET_PLAYER) then
-                TARGET_PLAYER:SetWalkSpeed(200)
-                TARGET_PLAYER:SetRunSpeed(400)
-                TARGET_PLAYER:Freeze(false)
+            if IsValid(self.TargetPlayer) then
+                self.TargetPlayer:SetWalkSpeed(160)
+                self.TargetPlayer:SetRunSpeed(240)
+                self.TargetPlayer:Freeze(false)
             end
-            TARGET_PLAYER = closestPlayer
+            self.TargetPlayer = closestPlayer
             self.StalkPercentage = 0
             net.Start("UpdateTargetPlayer")
-            net.WriteEntity(TARGET_PLAYER)
+            net.WriteEntity(self.TargetPlayer)
             net.SendToServer()
             net.Start("UpdateStalkPercentage")
             net.WriteInt(self.StalkPercentage, 8)
             net.SendToServer()
-        elseif TARGET_PLAYER and IsValid(TARGET_PLAYER) then
-            TARGET_PLAYER:SetWalkSpeed(200)
-            TARGET_PLAYER:SetRunSpeed(400)
-            TARGET_PLAYER:Freeze(false)
-            TARGET_PLAYER = nil
+        elseif self.TargetPlayer and IsValid(self.TargetPlayer) then
+            self.TargetPlayer:SetWalkSpeed(160)
+            self.TargetPlayer:SetRunSpeed(240)
+            self.TargetPlayer:Freeze(false)
+            self.TargetPlayer = nil
             self.StalkPercentage = 0
             net.Start("UpdateTargetPlayer")
             net.WriteEntity(nil)
@@ -148,15 +157,16 @@ end
 if SERVER then
     util.AddNetworkString("UpdateTargetPlayer")
     util.AddNetworkString("UpdateStalkPercentage")
+    util.AddNetworkString("ApplyBlackScreenEffect")
     net.Receive("UpdateTargetPlayer", function(len, ply)
         local weapon = ply:GetActiveWeapon()
         if IsValid(weapon) and weapon:GetClass() == "weapon_scp966" then
-            if IsValid(TARGET_PLAYER) then
-                TARGET_PLAYER:SetWalkSpeed(200)
-                TARGET_PLAYER:SetRunSpeed(400)
-                TARGET_PLAYER:Freeze(false)
+            if IsValid(weapon.TargetPlayer) then
+                weapon.TargetPlayer:SetWalkSpeed(160)
+                weapon.TargetPlayer:SetRunSpeed(240)
+                weapon.TargetPlayer:Freeze(false)
             end
-            TARGET_PLAYER = net.ReadEntity()
+            weapon.TargetPlayer = net.ReadEntity()
             weapon.StalkPercentage = 0
             net.Start("UpdateStalkPercentage")
             net.WriteInt(weapon.StalkPercentage, 8)
@@ -166,25 +176,26 @@ if SERVER then
 end
 
 function SWEP:IncreaseStalkPercentage()
-    if SERVER and TARGET_PLAYER and IsValid(TARGET_PLAYER) then
-        if TARGET_PLAYER:Alive() and self.Owner:IsLineOfSightClear(TARGET_PLAYER) then
+    if SERVER and self.TargetPlayer and IsValid(self.TargetPlayer) then
+        if self.TargetPlayer:Alive() and self.Owner:IsLineOfSightClear(self.TargetPlayer) then
             if self.StalkPercentage < 100 then
-                self.StalkPercentage = math.min(self.StalkPercentage + 3, 100)
-                TARGET_PLAYER:SetWalkSpeed(200 * (1 - self.StalkPercentage / 100))
-                TARGET_PLAYER:SetRunSpeed(400 * (1 - self.StalkPercentage / 100))
+                self.StalkPercentage = math.min(self.StalkPercentage + 2, 100)
+                self.TargetPlayer:SetWalkSpeed(160 * (1 - self.StalkPercentage / 100))
+                self.TargetPlayer:SetRunSpeed(240 * (1 - self.StalkPercentage / 100))
                 net.Start("UpdateStalkPercentage")
                 net.WriteInt(self.StalkPercentage, 8)
                 net.Broadcast()
             end
             if self.StalkPercentage >= 100 then
-                TARGET_PLAYER:Freeze(true) 
-                self:ApplyBlackScreenEffect(TARGET_PLAYER)
+                self.TargetPlayer:Freeze(true)
+                net.Start("ApplyBlackScreenEffect")
+                net.Send(self.Owner)
             end
         else
-            TARGET_PLAYER:SetWalkSpeed(200) 
-            TARGET_PLAYER:SetRunSpeed(400) 
-            TARGET_PLAYER:Freeze(false)
-            TARGET_PLAYER = nil
+            self.TargetPlayer:SetWalkSpeed(160)
+            self.TargetPlayer:SetRunSpeed(240)
+            self.TargetPlayer:Freeze(false)
+            self.TargetPlayer = nil
             self.StalkPercentage = 0
             net.Start("UpdateTargetPlayer")
             net.WriteEntity(nil)
@@ -196,20 +207,31 @@ function SWEP:IncreaseStalkPercentage()
     end
 end
 
+if CLIENT then
+    net.Receive("ApplyBlackScreenEffect", function()
+        local weapon = LocalPlayer():GetActiveWeapon()
+        if IsValid(weapon) and weapon:GetClass() == "weapon_scp966" then
+            weapon:ApplyBlackScreenEffect(LocalPlayer())
+        end
+    end)
+end
+
 function SWEP:ApplyBlackScreenEffect(target)
-    if CLIENT and target == LocalPlayer() then
-        hook.Add("HUDPaint", "BlackScreenEffect", function()
-            if not target:Alive() then
-                hook.Remove("HUDPaint", "BlackScreenEffect")
-                return
-            end
-            local alpha = math.min(255, self.StalkPercentage * 2.55)
-            surface.SetDrawColor(0, 0, 0, alpha)
-            surface.DrawRect(0, 0, ScrW(), ScrH())
-            if self.StalkPercentage >= 100 then
-                draw.SimpleText("You are unconscious", "Trebuchet24", ScrW() / 2, ScrH() / 2, Color(255, 255, 255, 255), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
-            end
-        end)
+    if CLIENT then
+        if target == LocalPlayer() then
+            hook.Add("HUDPaint", "BlackScreenEffect", function()
+                if not target:Alive() then
+                    hook.Remove("HUDPaint", "BlackScreenEffect")
+                    return
+                end
+                if self.StalkPercentage >= 100 then
+                    surface.SetDrawColor(Color(0,0,0, 254))
+                    surface.DrawRect( 0,0, ScrW(), ScrH() )
+
+                    draw.SimpleText("You are unconscious", "Trebuchet24", ScrW() / 2, ScrH() / 2, Color(255, 255, 255, 255), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+                end
+            end)
+        end
     end
 end
 
@@ -226,14 +248,17 @@ end
 
 hook.Add("PlayerDeath", "ResetTargetOnDeath", function(victim)
     victim:Freeze(false)
-    if victim == TARGET_PLAYER then
-        TARGET_PLAYER = nil
-        net.Start("UpdateTargetPlayer")
-        net.WriteEntity(nil)
-        net.Broadcast()
-        net.Start("UpdateStalkPercentage")
-        net.WriteInt(0, 8)
-        net.Broadcast()
+    for _, ply in ipairs(player.GetAll()) do
+        local weapon = ply:GetActiveWeapon()
+        if IsValid(weapon) and weapon:GetClass() == "weapon_scp966" and victim == weapon.TargetPlayer then
+            weapon.TargetPlayer = nil
+            net.Start("UpdateTargetPlayer")
+            net.WriteEntity(nil)
+            net.Broadcast()
+            net.Start("UpdateStalkPercentage")
+            net.WriteInt(0, 8)
+            net.Broadcast()
+        end
     end
 end)
 
@@ -249,14 +274,17 @@ if CLIENT then
         local targetinstructions = "Press H to target a player"
         draw.SimpleText(targetinstructions, "Trebuchet24", ScrW() / 2, ScrH() - 125, Color(238, 255, 0), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
 
-        local targetText = "Target: " .. (TARGET_PLAYER and IsValid(TARGET_PLAYER) and TARGET_PLAYER:Nick() or "No one")
+        local targetText = "Target: " .. (self.TargetPlayer and IsValid(self.TargetPlayer) and self.TargetPlayer:Nick() or "No one")
         local stalkText = "Stalk: " .. self.StalkPercentage .. "%"
         draw.SimpleText(targetText, "Trebuchet24", ScrW() / 2, ScrH() - 100, Color(255, 94, 0), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
         draw.SimpleText(stalkText, "Trebuchet24", ScrW() / 2, ScrH() - 75, Color(255, 94, 0), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
     end
 
     net.Receive("UpdateTargetPlayer", function()
-        TARGET_PLAYER = net.ReadEntity()
+        local weapon = LocalPlayer():GetActiveWeapon()
+        if IsValid(weapon) and weapon:GetClass() == "weapon_scp966" then
+            weapon.TargetPlayer = net.ReadEntity()
+        end
     end)
 
     net.Receive("UpdateStalkPercentage", function()
